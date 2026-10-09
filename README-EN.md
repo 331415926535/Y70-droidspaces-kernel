@@ -38,6 +38,8 @@ English | [**简体中文**](README.md)
 
 > **Note:** OnePlus ColorOS 14/15 is currently not supported. A data wipe may be required after flashing.
 
+> Build workflows support SukiSU only.
+
 > **rekernel feature (beta): rekernel feature is now supported (currently in beta)**
 
 

@@ -2,7 +2,7 @@
 # 应用 SUSFS 补丁及各内核版本所需的上下文修复
 # 依赖环境变量：
 #   ANDROID_VERSION KERNEL_VERSION KSU_VARIANT OS_PATCH_LEVEL SUB_LEVEL
-#   KERNEL_ROOT SUSFS4KSU KERNEL_PATCHES LEGACY_SUKISU_CONFIG
+#   KERNEL_ROOT SUSFS4KSU KERNEL_PATCHES
 # 调用前必须将工作目录设为 $KERNEL_ROOT
 set -eo pipefail
 
@@ -30,15 +30,8 @@ cp "$SUSFS4KSU"/kernel_patches/fs/* ./common/fs/
 cp "$SUSFS4KSU"/kernel_patches/include/linux/* ./common/include/linux/
 
 case "$KSU_VARIANT" in
-  "Official")
-    cd ./KernelSU
-    cp "$SUSFS4KSU"/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-    patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
-
-    cd ..
-    ;;
-  "Next"|"SukiSU"|"SukiSU(40726)"|"SukiSU(40548)"|"BakaSU")
-    echo "Next/SukiSU/SukiSU(40726)/SukiSU(40548)/BakaSU 使用内置 SUSFS 支持"
+  "SukiSU")
+    echo "SukiSU 使用内置 SUSFS 支持"
     ;;
 esac
 
@@ -69,7 +62,7 @@ restore_legacy_fdinfo_context() {
 
 # 临时调整旧内核源码上下文，使 SUSFS 主补丁可以匹配
 if [[ "$ANDROID_VERSION" == "android12" && "$KERNEL_VERSION" == "5.10" ]]; then
-  if [[ -n "$LEGACY_SUKISU_CONFIG" && "$CURRENT_SUB" -le 43 ]]; then
+  if [[ "$CURRENT_SUB" -le 43 ]]; then
     echo "临时调整 Android 12 5.10 base.c 上下文"
     perl -i -pe 's/(int|size_t)\s+this_len\s*=\s*min_t\s*\(\s*\1\s*,/size_t this_len = min_t(size_t,/;' fs/proc/base.c
   fi
@@ -144,9 +137,9 @@ fi
 
 patch -p1 < "$SUSFS_PATCH" || true
 
-# 为尚未提供 SU 会话 FD 接口的 SukiSU/BakaSU 恢复旧版 exec hook 行为
+# 为尚未提供 SU 会话 FD 接口的 SukiSU 恢复旧版 exec hook 行为
 EXEC_HELPER=""
-if [[ "$KSU_VARIANT" == SukiSU* || "$KSU_VARIANT" == "BakaSU" ]]; then
+if [[ "$KSU_VARIANT" == "SukiSU" ]]; then
   if grep -qF 'ksu_install_su_fd();' fs/exec.c; then
     EXEC_HELPER="ksu_install_su_fd"
   elif grep -qF 'ksu_handle_post_execveat_sucompat(' fs/exec.c; then
@@ -191,7 +184,7 @@ fi
 
 # 还原仅用于补丁匹配的临时源码调整
 if [[ "$ANDROID_VERSION" == "android12" && "$KERNEL_VERSION" == "5.10" ]]; then
-  if [[ -n "$LEGACY_SUKISU_CONFIG" && "$CURRENT_SUB" -le 43 ]]; then
+  if [[ "$CURRENT_SUB" -le 43 ]]; then
     echo "还原 Android 12 5.10 base.c 临时调整"
     sed -i 's/^size_t this_len = min_t(size_t, count, PAGE_SIZE);$/int this_len = min_t(int, count, PAGE_SIZE);/' fs/proc/base.c
   fi
@@ -270,7 +263,7 @@ fix_task_mmu_show_pad() {
   local excluded_patch_level="${2:-}"
 
   # 仅固定旧版 SUSFS 补丁会引入 goto show_pad，最新版已不再包含该代码
-  if [[ -n "$LEGACY_SUKISU_CONFIG" && "$CURRENT_SUB" -le "$max_sub" ]] \
+  if [[ "$CURRENT_SUB" -le "$max_sub" ]] \
     && { [[ -z "$excluded_patch_level" ]] || [[ "$OS_PATCH_LEVEL" != "$excluded_patch_level" ]]; }; then
     sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
   fi
@@ -298,7 +291,7 @@ fi
 # Android 15 - 6.6 修复
 if [[ "$ANDROID_VERSION" == "android15" && "$KERNEL_VERSION" == "6.6" ]]; then
   # 修复老版 SukiSU 6.6.50~6.6.58: task_mmu.c 打入 SUSFS 后使用 vma，但旧源码没有对应声明
-  if [[ -n "$LEGACY_SUKISU_CONFIG" && "$CURRENT_SUB" -ge 50 && "$CURRENT_SUB" -le 58 ]] \
+  if [[ "$CURRENT_SUB" -ge 50 && "$CURRENT_SUB" -le 58 ]] \
     && grep -qF 'vma = find_vma(mm, start_vaddr);' ./fs/proc/task_mmu.c; then
     TASK_MMU_PATCH="$KERNEL_PATCHES/wild/archived/susfs_fix_patches/v2.1.0/a15-6.6/task_mmu.c.patch"
     if [ ! -f "$TASK_MMU_PATCH" ]; then
@@ -319,7 +312,7 @@ fi
 if [[ "$ANDROID_VERSION" == "android16" && "$KERNEL_VERSION" == "6.12" ]]; then
   # 固定旧版 SukiSU 在 6.12 上会重复定义 setresuid hook
   SETUID_HOOK="$KERNEL_ROOT/common/drivers/kernelsu/setuid_hook.c"
-  if [[ -n "$LEGACY_SUKISU_CONFIG" && -f "$SETUID_HOOK" ]] \
+  if [[ -f "$SETUID_HOOK" ]] \
     && grep -qF 'defined(CONFIG_KSU_MANUAL_HOOK))' "$SETUID_HOOK"; then
     sed -i 's/defined(CONFIG_KSU_MANUAL_HOOK))/!defined(CONFIG_KSU_SUSFS) \&\& defined(CONFIG_KSU_MANUAL_HOOK))/' "$SETUID_HOOK"
     echo "已修复 setuid_hook.c 重复定义问题"

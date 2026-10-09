@@ -29,8 +29,6 @@ on:
         type: choice
         options:
           - SukiSU
-          - BakaSU
-          - Official
         default: SukiSU
       sub_level_min:
         description: "最小子版本号（留空不限）"

@@ -60,10 +60,6 @@ on:
         required: false
         type: boolean
         default: false
-      use_nomount:
-        required: false
-        type: boolean
-        default: false
       use_networking:
         required: false
         type: boolean
@@ -193,20 +189,9 @@ jobs:
           KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
           mkdir -p "$KERNEL_ROOT"
 
-          LEGACY_SUKISU_CONFIG=""
-          case "${{ inputs.ksu_variant }}" in
-            SukiSU\(*\)) LEGACY_SUKISU_CONFIG="$GITHUB_WORKSPACE/config/${{ inputs.ksu_variant }}.config" ;;
-          esac
-
-          if [ -n "$LEGACY_SUKISU_CONFIG" ] && [ ! -f "$LEGACY_SUKISU_CONFIG" ]; then
-            echo "未找到 ${{ inputs.ksu_variant }} 固定提交配置: $LEGACY_SUKISU_CONFIG" >&2
-            exit 1
-          fi
-
           cat >> $GITHUB_ENV << EOF
           CONFIG=$CONFIG
           KERNEL_ROOT=$KERNEL_ROOT
-          LEGACY_SUKISU_CONFIG=$LEGACY_SUKISU_CONFIG
           DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig
           SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu
           KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches
@@ -237,10 +222,6 @@ jobs:
           if [ -f "$CONFIG_FILE" ]; then
             echo "加载配置文件: $CONFIG_FILE"
             cat "$CONFIG_FILE"
-          fi
-          if [ -n "$LEGACY_SUKISU_CONFIG" ]; then
-            echo "加载老版 SukiSU 固定提交配置: $LEGACY_SUKISU_CONFIG"
-            cat "$LEGACY_SUKISU_CONFIG"
           fi
 
       - name: 安装编译依赖
@@ -537,34 +518,15 @@ jobs:
         if: inputs.ksu_mode != '禁用KSU'
         run: |
           variant_input="${{ inputs.ksu_variant }}"
-
-          case "$variant_input" in
-            "Official"|"BakaSU")
-              BRANCH="-s main"
-              ;;
-            "SukiSU")
-              if [ "${{ inputs.enable_susfs }}" = "false" ]; then
-                BRANCH="-s main"
-              else
-                BRANCH="-s builtin"
-              fi
-              ;;
-            "Next")
-              BRANCH=""
-              ;;
-            *)
-              if [ -z "$LEGACY_SUKISU_CONFIG" ] || [ ! -f "$LEGACY_SUKISU_CONFIG" ]; then
-                echo "未知变体: $variant_input" >&2
-                exit 1
-              fi
-              SUKISU_FIXED_COMMIT=$(grep "^sukisu=" "$LEGACY_SUKISU_CONFIG" | cut -d'=' -f2-)
-              if [ -z "$SUKISU_FIXED_COMMIT" ]; then
-                echo "未在 $LEGACY_SUKISU_CONFIG 配置 SukiSU 固定提交" >&2
-                exit 1
-              fi
-              BRANCH="-s $SUKISU_FIXED_COMMIT"
-              ;;
-          esac
+          if [ "$variant_input" != "SukiSU" ]; then
+            echo "错误: 仅支持 SukiSU，收到 $variant_input" >&2
+            exit 1
+          fi
+          if [ "${{ inputs.enable_susfs }}" = "false" ]; then
+            BRANCH="-s main"
+          else
+            BRANCH="-s builtin"
+          fi
 
           # 检查自定义提交 (仅对 SukiSU 生效)
           CONFIG_FILE="config/config"
@@ -586,42 +548,8 @@ jobs:
         if: inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          case "${{ inputs.ksu_variant }}" in
-            "Official")
-              echo "添加 KernelSU 官方版..."
-              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash $BRANCH
-
-              cd KernelSU
-              KSU_GIT_VERSION=$(git rev-list --count HEAD)
-              KSU_VERSION=$((20000 + KSU_GIT_VERSION))
-              echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-
-              if [ -f "kernel/Kbuild" ]; then
-                sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Kbuild
-              fi
-              cd ..
-              ;;
-            "Next")
-              echo "添加 KernelSU-Next..."
-              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/refs/heads/dev/kernel/setup.sh" | bash -s dev_susfs
-              ;;
-            "SukiSU")
-              echo "添加 ${{ inputs.ksu_variant }}..."
-              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash $BRANCH
-              ;;
-            "BakaSU")
-              echo "添加 BakaSU..."
-              curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash $BRANCH
-              ;;
-            *)
-              if [ -z "$LEGACY_SUKISU_CONFIG" ]; then
-                echo "未知变体: ${{ inputs.ksu_variant }}" >&2
-                exit 1
-              fi
-              echo "添加 ${{ inputs.ksu_variant }}..."
-              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash $BRANCH
-              ;;
-          esac
+          echo "添加 SukiSU..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash $BRANCH
 
           if [ -d "KernelSU/.git" ]; then
             KSU_LATEST_COMMIT_DATE=$(git -C KernelSU log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
@@ -631,7 +559,7 @@ jobs:
           fi
 
       - name: 配置 SukiSU 管理器信息
-        if: (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'SukiSU(40726)' || inputs.ksu_variant == 'SukiSU(40548)') && inputs.ksu_mode != '禁用KSU'
+        if: inputs.ksu_variant == 'SukiSU' && inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}/KernelSU
         run: |
           KBUILD_FILE="./kernel/Kbuild"
@@ -724,9 +652,7 @@ jobs:
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
 
           echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
-          if [ -n "$LEGACY_SUKISU_CONFIG" ]; then
-            retry clone_susfs https://gitlab.com/simonpunk/susfs4ksu.git
-          elif [ "${{ inputs.ksu_variant }}" == "SukiSU" ]; then
+          if [ "${{ inputs.ksu_variant }}" == "SukiSU" ]; then
             if ! retry clone_susfs https://github.com/ShirkNeko/susfs4ksu.git; then
               echo "::warning::ShirkNeko 仓库克隆失败（分支 $SUSFS_BRANCH），回退到 simonpunk 原版..."
               retry clone_susfs https://gitlab.com/simonpunk/susfs4ksu.git
@@ -735,18 +661,8 @@ jobs:
             retry clone_susfs https://gitlab.com/simonpunk/susfs4ksu.git
           fi
 
-          if [ -n "$LEGACY_SUKISU_CONFIG" ]; then
-            SUSFS_FIXED_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$LEGACY_SUKISU_CONFIG" | cut -d'=' -f2- || true)
-            if [ -z "$SUSFS_FIXED_COMMIT" ]; then
-              echo "未在 $LEGACY_SUKISU_CONFIG 配置 $SUSFS_BRANCH 的固定 SUSFS 提交" >&2
-              exit 1
-            fi
-            echo "${{ inputs.ksu_variant }} 固定 SUSFS 提交: $SUSFS_FIXED_COMMIT"
-            retry git -C susfs4ksu checkout "$SUSFS_FIXED_COMMIT"
-          fi
-
           CONFIG_FILE="config/config"
-          if [ -z "$LEGACY_SUKISU_CONFIG" ] && [ -f "$CONFIG_FILE" ]; then
+          if [ -f "$CONFIG_FILE" ]; then
             CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2 || true)
             if [ "$CUSTOM_ENABLED" == "true" ]; then
               CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2 || true)
@@ -765,10 +681,10 @@ jobs:
           echo "SUSFS 仓库最新提交日期: $SUSFS_LATEST_COMMIT_DATE"
 
       # ==================== SUSFS 集成补丁导出 ====================
-      # 仅 SukiSU / BakaSU 且启用 SUSFS 时导出，快照用临时索引生成树对象，
+      # 仅 SukiSU 且启用 SUSFS 时导出，快照用临时索引生成树对象，
       # 不创建提交，避免改变「配置内核名称」读取的 HEAD 哈希
       - name: 记录 SUSFS 基线快照
-        if: inputs.export_susfs_patches && inputs.enable_susfs && inputs.ksu_mode != '禁用KSU' && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'BakaSU')
+        if: inputs.export_susfs_patches && inputs.enable_susfs && inputs.ksu_mode != '禁用KSU' && inputs.ksu_variant == 'SukiSU'
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
           # 排除 .rej/.orig 和补丁文件本身：apply.sh 会把 SUSFS 补丁拷进 common/ 并留下 .rej
@@ -882,32 +798,6 @@ jobs:
 
       - name: 备份基准 defconfig
         run: cp "$DEFCONFIG" "$DEFCONFIG.orig"
-
-      - name: 集成 NoMount 挂载元模块
-        if: inputs.use_nomount
-        working-directory: ${{ env.KERNEL_ROOT }}/common
-        run: |
-          # NoMount 是挂载元模块，在 fs/ 目录注册子系统，与 SUSFS sus_mount 不冲突，可与任意 KSU 变体共存。
-          # 必须在「生成 SUSFS 集成补丁」之后运行，避免 NoMount 改动被计入 susfs.patch；
-          # 且在「备份基准 defconfig」之后追加 CONFIG，确保 6.1+ 的 bazel fragment diff 能捕获 CONFIG_NOMOUNT。
-          set -euo pipefail
-          # 拉取 NoMount 内核集成脚本（dev 分支最新提交），脚本会克隆仓库、建立 fs/nomount 软链接并注册 Kconfig/Makefile（内部含幂等守卫）
-          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-            https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -s dev
-
-          if [ ! -L "fs/nomount" ]; then
-            echo "::error::NoMount 集成失败：fs/nomount 软链接缺失"
-            exit 1
-          fi
-          echo "NoMount 集成完成，commit: $(git -C NoMount rev-parse HEAD)"
-
-          # 启用 NoMount defconfig（幂等）
-          if ! grep -q '^CONFIG_NOMOUNT=y' "$DEFCONFIG"; then
-            echo "CONFIG_NOMOUNT=y" >> "$DEFCONFIG"
-            echo "已启用 CONFIG_NOMOUNT=y"
-          else
-            echo "CONFIG_NOMOUNT=y 已存在，跳过"
-          fi
 
       - name: 集成 Droidspaces 支持
         if: inputs.droidspaces != 'off'
@@ -1384,7 +1274,7 @@ jobs:
             echo "CONFIG_KSU=y" >> "$DEFCONFIG"
           fi
 
-          if [ "${{ inputs.ksu_mode }}" != "禁用KSU" ] && { [ "${{ inputs.ksu_variant }}" == "SukiSU" ] || [ "${{ inputs.ksu_variant }}" == "SukiSU(40726)" ] || [ "${{ inputs.ksu_variant }}" == "SukiSU(40548)" ] || [ "${{ inputs.ksu_variant }}" == "BakaSU" ] || [ "${{ inputs.ksu_variant }}" == "Next" ]; }; then
+          if [ "${{ inputs.ksu_mode }}" != "禁用KSU" ] && [ "${{ inputs.ksu_variant }}" == "SukiSU" ]; then
             if [[ "${{ inputs.use_kpm }}" == enabled* ]] || [[ "${{ inputs.use_kpm }}" == patched* ]]; then
               if ! grep -RqsE '^[[:space:]]*config[[:space:]]+KPM([[:space:]]|$)' common KernelSU 2>/dev/null; then
                 echo "错误: 已请求启用 KPM，但当前 KernelSU 代码未声明 CONFIG_KPM" >&2
@@ -1398,22 +1288,6 @@ jobs:
           if [[ ! "$CURRENT_SUB" =~ ^[0-9]+$ ]]; then
             CURRENT_SUB=99999
           fi
-          if [[ "${{ inputs.ksu_variant }}" == "BakaSU" && "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.15" && "$CURRENT_SUB" -ge 74 && "$CURRENT_SUB" -le 137 ]]; then
-            {
-              echo "CONFIG_KALLSYMS=y"
-              echo "CONFIG_KALLSYMS_ALL=y"
-            } >> "$DEFCONFIG"
-            # 修复 5.15.74~5.15.137: kallsyms_on_each_symbol 仅在 LIVEPATCH 下编译，导致 BakaSU 链接失败
-            KALLSYMS_C="./common/kernel/kallsyms.c"
-            if [ -f "$KALLSYMS_C" ] \
-              && grep -qF 'int kallsyms_on_each_symbol' "$KALLSYMS_C" \
-              && grep -qF '#endif /* CONFIG_LIVEPATCH */' "$KALLSYMS_C"; then
-              sed -i '/^#ifdef CONFIG_LIVEPATCH$/,/^int kallsyms_on_each_symbol/ { /^#ifdef CONFIG_LIVEPATCH$/d }' "$KALLSYMS_C"
-              sed -i '/^int kallsyms_on_each_symbol/,/^#endif \/\* CONFIG_LIVEPATCH \*\// { /^#endif \/\* CONFIG_LIVEPATCH \*\//d }' "$KALLSYMS_C"
-              echo "已修复 kallsyms_on_each_symbol 的 LIVEPATCH 编译限制"
-            fi
-          fi
-
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
       - name: 添加 SUSFS 配置
@@ -1633,8 +1507,8 @@ jobs:
           retention-days: 7
           compression-level: 9
 
-      # - name: 应用 KPM 补丁 (SukiSU/BakaSU/Next)
-      #   if: startsWith(inputs.use_kpm, 'patched') && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'BakaSU' || inputs.ksu_variant == 'Next')
+      # - name: 应用 KPM 补丁 (SukiSU)
+      #   if: startsWith(inputs.use_kpm, 'patched') && inputs.ksu_variant == 'SukiSU'
       #   run: |
       #     case "${{ inputs.android_version }}" in
       #       "android12"|"android13")
