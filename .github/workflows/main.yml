@@ -38,10 +38,10 @@ on:
         description: "KernelSU / SUSFS 模式"
         type: choice
         options:
-          - 关闭
+          - 启用
           - 禁用SUSFS
           - 禁用KSU
-        default: 关闭
+        default: 启用
       use_kpm:
         description: "KPM 功能（patched 尚不支持）"
         type: choice
