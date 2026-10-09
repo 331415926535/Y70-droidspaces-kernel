@@ -35,14 +35,6 @@ on:
           - Release
         default: Actions
 
-      # ==================== KernelSU 配置 ====================
-      # KernelSU 变体固定为 BakaSU
-      kernelsu_branch:
-        description: "BakaSU branch (main/dev/自定义，留空使用main)"
-        type: string
-        default: "main"
-        required: false
-
       # ==================== 可选配置 ====================
       version:
         description: "自定义版本名 (可选)"
@@ -94,6 +86,10 @@ on:
         description: "应用 CVE-2026-43499 rtmutex 修复链"
         type: boolean
         default: true
+      use_kpm:
+        description: "启用 SukiSU KPM"
+        type: boolean
+        default: false
       cancel_susfs:
         description: "禁用 SUSFS"
         type: boolean
@@ -146,21 +142,16 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - name: 固定 BakaSU 构建提交
+      - name: 读取 SukiSU 分支提交
         id: resolve
         if: inputs.clean_build != true
         env:
-          KSU_BRANCH: ${{ inputs.kernelsu_branch || 'main' }}
+          KSU_BRANCH: ${{ inputs.cancel_susfs && 'main' || 'builtin' }}
         run: |
           set -euo pipefail
-          if [[ "$KSU_BRANCH" =~ ^[a-fA-F0-9]{40}$ ]]; then
-            sha="${KSU_BRANCH,,}"
-          else
-            git check-ref-format --branch "$KSU_BRANCH"
-            sha=$(git ls-remote --heads https://github.com/Baka-SU/BakaSU.git "refs/heads/$KSU_BRANCH" | awk '{ print $1 }')
-          fi
+          sha=$(git ls-remote --heads https://github.com/SukiSU-Ultra/SukiSU-Ultra.git "refs/heads/$KSU_BRANCH" | awk '{ print $1 }')
           if [[ ! "$sha" =~ ^[a-fA-F0-9]{40}$ ]]; then
-            echo "::error::找不到 BakaSU 分支或提交: $KSU_BRANCH"
+            echo "::error::找不到 SukiSU 分支: $KSU_BRANCH"
             exit 1
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -234,12 +225,12 @@ jobs:
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
       revision: ${{ matrix.revision || '' }}
-      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'BakaSU' }}
-      ksu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
+      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'SukiSU' }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel || false }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       supp_op: false
@@ -256,11 +247,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -276,11 +267,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -296,11 +287,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -317,11 +308,11 @@ jobs:
     with:
       android_version: android14
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -337,11 +328,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -357,11 +348,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -377,11 +368,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -397,11 +388,11 @@ jobs:
     secrets: inherit
     with:
       clean_build: ${{ inputs.clean_build }}
-      kernelsu_branch: ${{ needs.resolve-ksu-ref.outputs.sha || 'main' }}
       version: ${{ inputs.version }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm }}
       use_rekernel: ${{ inputs.use_rekernel }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       cancel_susfs: ${{ inputs.cancel_susfs }}
@@ -456,7 +447,7 @@ jobs:
   # 当 release_type 不是 Actions 时，创建 GitHub Release
   # 仅限原仓库运行，fork 仓库跳过此步骤
   release:
-    if: ${{ always() && !cancelled() && needs.resolve-ksu-ref.result == 'success' && !inputs.build_kernel_version && inputs.release_type != 'Actions' && github.repository == 'zhuzhuzihan/GKI_BakaSU_SUSFS' }}
+    if: ${{ always() && !cancelled() && needs.resolve-ksu-ref.result == 'success' && !inputs.build_kernel_version && inputs.release_type != 'Actions' && github.repository == 'coolzyd9107/GKI_SukiSU_SUSFS' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -480,6 +471,7 @@ jobs:
       NOTIFY_SUSFS_STATUS: ${{ inputs.clean_build != true && inputs.cancel_susfs != true && inputs.build_target == 'android17-6.18' && 'auto-skipped (Android 17/6.18)' || inputs.clean_build != true && inputs.cancel_susfs != true && inputs.build_target == 'all' && 'enabled (Android 17/6.18 auto-skipped)' || inputs.clean_build != true && inputs.cancel_susfs != true && 'true' || 'false' }}
       NOTIFY_ZRAM_STATUS: ${{ inputs.clean_build != true && inputs.use_zram && inputs.build_target == 'android17-6.18' && 'auto-skipped (Android 17/6.18)' || inputs.clean_build != true && inputs.use_zram && inputs.build_target == 'all' && 'enabled (Android 17/6.18 auto-skipped)' || inputs.clean_build != true && inputs.use_zram && 'true' || 'false' }}
       NOTIFY_REKERNEL_STATUS: ${{ inputs.clean_build != true && inputs.use_rekernel && inputs.build_target == 'android17-6.18' && 'auto-skipped (Android 17/6.18)' || inputs.clean_build != true && inputs.use_rekernel && inputs.build_target == 'all' && 'enabled (Android 17/6.18 auto-skipped)' || inputs.clean_build != true && inputs.use_rekernel && 'true' || 'false' }}
+      NOTIFY_KPM_STATUS: ${{ inputs.clean_build != true && inputs.use_kpm && 'enabled' || 'disabled' }}
 
     steps:
       # ==================== 设置显示名称 ====================
@@ -496,7 +488,7 @@ jobs:
             echo "MOUNT_TYPE=" >> "$GITHUB_ENV"
             echo "BRANCH_INFO=" >> "$GITHUB_ENV"
           else
-            KSU_NAME="BakaSU"
+            KSU_NAME="SukiSU"
             echo "BBG_STATUS=${{ inputs.use_bbg && '支持' || '不支持' }}" >> "$GITHUB_ENV"
             LZ4_STATUS="${{ inputs.use_zram && '开启' || '未开启' }}"
             LZ4_SUFFIX="${{ inputs.use_zram && '、LZ4KD' || '' }}"
@@ -539,7 +531,7 @@ jobs:
               echo "COMPATIBILITY_NOTE=Android 17 / 6.18 自动跳过 SUSFS、ZRAM/LZ4KD、NTSync、Re-Kernel、一加 8E 专用补丁和 CVE-2026-43499 修复链。" >> "$GITHUB_ENV"
             fi
 
-            echo "BRANCH_INFO=(${{ inputs.kernelsu_branch || 'main' }})" >> "$GITHUB_ENV"
+            echo "BRANCH_INFO=(${{ inputs.cancel_susfs && 'main' || 'builtin' }})" >> "$GITHUB_ENV"
           fi
 
           echo "KSU_NAME=$KSU_NAME" >> "$GITHUB_ENV"
@@ -574,7 +566,7 @@ jobs:
         if: inputs.clean_build != true
         run: |
           KSU_REF="${{ needs.resolve-ksu-ref.outputs.sha }}"
-          KSU_URL="https://github.com/Baka-SU/BakaSU/commit/$KSU_REF"
+          KSU_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra/commit/$KSU_REF"
 
           echo "KSU_REF=$KSU_REF" >> "$GITHUB_ENV"
           echo "KSU_URL=$KSU_URL" >> "$GITHUB_ENV"
@@ -582,8 +574,7 @@ jobs:
       - name: 获取 SUSFS 提交信息
         if: inputs.clean_build != true
         run: |
-          GITLAB_OWNER="simonpunk"
-          GITLAB_REPO="susfs4ksu"
+          SUSFS_REPO="https://github.com/ShirkNeko/susfs4ksu.git"
           declare -A BRANCH_MAP=(
             ["gki_android12_5_10"]="gki-android12-5.10"
             ["gki_android13_5_10"]="gki-android13-5.10"
@@ -595,9 +586,9 @@ jobs:
           )
           for var_name in "${!BRANCH_MAP[@]}"; do
             branch_name="${BRANCH_MAP[$var_name]}"
-            COMMIT_HASH=$(git ls-remote https://gitlab.com/$GITLAB_OWNER/$GITLAB_REPO.git refs/heads/$branch_name | awk '{ print $1 }')
+            COMMIT_HASH=$(git ls-remote "$SUSFS_REPO" "refs/heads/$branch_name" | awk '{ print $1 }')
             if [[ -n "$COMMIT_HASH" ]]; then
-              COMMIT_URL="https://gitlab.com/$GITLAB_OWNER/$GITLAB_REPO/-/commit/$COMMIT_HASH"
+              COMMIT_URL="https://github.com/ShirkNeko/susfs4ksu/commit/$COMMIT_HASH"
               echo "COMMIT_HASH_${var_name}=$COMMIT_HASH" >> "$GITHUB_ENV"
               echo "COMMIT_URL_${var_name}=$COMMIT_URL" >> "$GITHUB_ENV"
             fi
@@ -617,6 +608,7 @@ jobs:
           |:---|:---|
           | KernelSU | 未集成 / Not included |
           | SUSFS | 未集成 / Not included |
+          | KPM | 未集成 / Not included |
           | ZRAM、BBG、Re-Kernel、Droidspaces | 未集成 / Not included |
 
           > 刷入前请备份原厂 Boot 镜像，并确认内核版本与设备兼容。
@@ -640,6 +632,7 @@ jobs:
           |:---|:---|
           | ${{ env.KSU_NAME }} | ${{ env.BRANCH_INFO }} |
           | SUSFS | ${{ env.SUSFS_STATUS }} |
+          | KPM | ${{ inputs.clean_build && '未集成 / Not included' || inputs.use_kpm && '已启用 / Enabled' || '未启用 / Disabled' }} |
           | BBG 安全补丁 | ${{ env.BBG_STATUS }} |
           | LZ4KD & ONEPLUS_LZ4K | ${{ env.LZ4_STATUS }} |
           | LZ4 | ${{ env.LZ4_STATUS }} |
@@ -706,7 +699,7 @@ jobs:
           <details>
           <summary>🔗 提交信息 / Commit Info</summary>
 
-          **KernelSU (BakaSU)**: [${{ env.KSU_REF }}](${{ env.KSU_URL }})
+          **SukiSU**: [${{ env.KSU_REF }}](${{ env.KSU_URL }})
 
           **SUSFS4KSU**:
           - gki-android12-5.10: [${{ env.COMMIT_HASH_gki_android12_5_10 }}](${{ env.COMMIT_URL_gki_android12_5_10 }})
@@ -733,7 +726,7 @@ jobs:
           elif [ "${{ inputs.build_target }}" = "android17-6.18" ]; then
             SUS_VERSION="no-susfs"
           else
-            SUSFS_INFO_URL="https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android14-6.1/ksu_module_susfs/module.prop?ref_type=heads"
+            SUSFS_INFO_URL="https://raw.githubusercontent.com/ShirkNeko/susfs4ksu/gki-android14-6.1/ksu_module_susfs/module.prop"
             SUS_VERSION=$(curl --fail --silent --show-error "$SUSFS_INFO_URL" | awk -F '=' '$1 == "version" { print $2; exit }' || true)
           fi
           if [ -z "$SUS_VERSION" ]; then
@@ -833,8 +826,9 @@ jobs:
           Tag: <code>${NEW_TAG}</code>
           
           Features: 
-          <pre>Build mode = ${{ inputs.clean_build && 'Clean' || 'BakaSU' }}
+          <pre>Build mode = ${{ inputs.clean_build && 'Clean' || 'SukiSU' }}
           SuSFS = $NOTIFY_SUSFS_STATUS
+          KPM = $NOTIFY_KPM_STATUS
           BBG = ${{ inputs.clean_build != true && inputs.use_bbg && 'true' || 'false' }}
           LZ4KD = $NOTIFY_ZRAM_STATUS
           Re-Kernel = $NOTIFY_REKERNEL_STATUS
@@ -844,7 +838,7 @@ jobs:
           <pre>${INPUT_CHANGE_LOG}
           </pre>
           
-          Download: <a href="https://github.com/zhuzhuzihan/GKI_BakaSU_SUSFS/releases/tag/${NEW_TAG}">Click Here</a>
+          Download: <a href="https://github.com/coolzyd9107/GKI_SukiSU_SUSFS/releases/tag/${NEW_TAG}">Click Here</a>
 
           Workflow commit: <code>${WORKFLOW_COMMIT}</code>
           EOF
@@ -877,8 +871,9 @@ jobs:
           Tag: <code>${NEW_TAG}</code>
           
           Features: 
-          <pre>Build mode = ${{ inputs.clean_build && 'Clean' || 'BakaSU' }}
+          <pre>Build mode = ${{ inputs.clean_build && 'Clean' || 'SukiSU' }}
           SuSFS = $NOTIFY_SUSFS_STATUS
+          KPM = $NOTIFY_KPM_STATUS
           BBG = ${{ inputs.clean_build != true && inputs.use_bbg && 'true' || 'false' }}
           LZ4KD = $NOTIFY_ZRAM_STATUS
           Re-Kernel = $NOTIFY_REKERNEL_STATUS
@@ -888,7 +883,7 @@ jobs:
           <pre>${INPUT_CHANGE_LOG}
           </pre>
           
-          Download: <a href="https://github.com/zhuzhuzihan/GKI_BakaSU_SUSFS/releases/tag/${NEW_TAG}">Click Here</a>
+          Download: <a href="https://github.com/coolzyd9107/GKI_SukiSU_SUSFS/releases/tag/${NEW_TAG}">Click Here</a>
 
           Workflow commit: <code>${WORKFLOW_COMMIT}</code>
           EOF

@@ -52,14 +52,6 @@ on:
         type: string
         default: "r11"
 
-      # ==================== KernelSU 配置 ====================
-      # KernelSU 变体固定为 BakaSU
-      kernelsu_branch:
-        description: "KSU 分支 (main/builtin/自定义commit hash，留空使用默认)"
-        required: false
-        type: string
-        default: ""
-
       # ==================== 可选配置 ====================
       version:
         description: "自定义版本名 (可选)"
@@ -85,6 +77,11 @@ on:
       use_bbg:
         description: "启用 BBG 防格机"
         required: true
+        type: boolean
+        default: false
+      use_kpm:
+        description: "启用 SukiSU KPM"
+        required: false
         type: boolean
         default: false
       use_rekernel:
@@ -158,12 +155,12 @@ jobs:
       sub_level: ${{ inputs.sub_level }}
       os_patch_level: ${{ inputs.os_patch_level }}
       revision: ${{ inputs.revision || '' }}
-      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'BakaSU' }}
-      ksu_branch: ${{ inputs.kernelsu_branch }}
+      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'SukiSU' }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm || false }}
       use_rekernel: ${{ inputs.use_rekernel || false }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       supp_op: ${{ inputs.supp_op || false }}

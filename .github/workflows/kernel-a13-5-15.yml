@@ -11,12 +11,6 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      # KernelSU 变体固定为 BakaSU
-      kernelsu_branch:
-        description: "KSU 分支 (main/builtin/自定义commit hash，留空使用默认)"
-        required: false
-        type: string
-        default: ""
       clean_build:
         description: "清洁构建 (不集成 KernelSU、SUSFS 和可选补丁)"
         required: false
@@ -39,6 +33,11 @@ on:
       use_bbg:
         description: "启用 BBG 防格机"
         required: true
+        type: boolean
+        default: false
+      use_kpm:
+        description: "启用 SukiSU KPM"
+        required: false
         type: boolean
         default: false
       use_rekernel:
@@ -91,10 +90,6 @@ on:
         required: false
         type: boolean
         default: false
-      # KernelSU 变体固定为 BakaSU
-      kernelsu_branch:
-        required: true
-        type: string
       version:
         required: false
         type: string
@@ -108,6 +103,10 @@ on:
       use_bbg:
         required: true
         type: boolean
+      use_kpm:
+        required: false
+        type: boolean
+        default: false
       use_rekernel:
         required: false
         type: boolean
@@ -158,12 +157,12 @@ jobs:
       sub_level: ${{ matrix.sub_level }}
       os_patch_level: ${{ matrix.os_patch_level }}
       revision: ${{ matrix.revision || '' }}
-      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'BakaSU' }}
-      ksu_branch: ${{ inputs.kernelsu_branch }}
+      ksu_variant: ${{ inputs.clean_build && 'Clean' || 'SukiSU' }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
       use_zram: ${{ inputs.use_zram }}
       use_bbg: ${{ inputs.use_bbg }}
+      use_kpm: ${{ inputs.use_kpm || false }}
       use_rekernel: ${{ inputs.use_rekernel || false }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       supp_op: ${{ inputs.supp_op || false }}

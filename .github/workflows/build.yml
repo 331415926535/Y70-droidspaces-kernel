@@ -1,7 +1,7 @@
 # ========================================
 # GKI 内核构建工作流
 # ========================================
-# 此工作流负责编译 Android GKI 内核，支持 BakaSU、SUSFS 和清洁 GKI 构建
+# 此工作流负责编译 Android GKI 内核，支持 SukiSU、SUSFS 和清洁 GKI 构建
 # 通过 workflow_call 被其他工作流调用，不直接手动触发
 # ========================================
 
@@ -36,10 +36,6 @@ on:
       ksu_variant:
         required: true
         type: string
-      ksu_branch:
-        required: true
-        type: string
-
       # ==================== 可选配置 ====================
       version:
         required: false
@@ -74,6 +70,10 @@ on:
       enable_susfs:
         required: true
         type: boolean
+      use_kpm:
+        required: false
+        type: boolean
+        default: false
       supp_op:
         required: false
         type: boolean
@@ -125,12 +125,13 @@ jobs:
             echo "Droidspaces   : off"
           else
             echo "KernelSU      : ${{ inputs.ksu_variant }}"
-            echo "KSU 分支      : ${{ inputs.ksu_branch }}"
+            echo "SukiSU 分支   : ${{ inputs.enable_susfs && 'builtin' || 'main' }}"
             echo "Droidspaces   : ${{ inputs.droidspaces }}"
           fi
           echo "构建时间      : ${{ inputs.build_time }}"
           echo "清洁构建      : ${{ inputs.clean_build }}"
           echo "SUSFS 状态    : ${{ inputs.clean_build != true && inputs.enable_susfs && !(inputs.android_version == 'android17' && inputs.kernel_version == '6.18') }}"
+          echo "SukiSU KPM    : ${{ inputs.clean_build != true && inputs.use_kpm }}"
           echo "ZRAM 增强     : ${{ inputs.clean_build != true && inputs.use_zram && !(inputs.android_version == 'android17' && inputs.kernel_version == '6.18') }}"
           echo "BBG 补丁      : ${{ inputs.clean_build != true && inputs.use_bbg }}"
           echo "Re-Kernel     : ${{ inputs.clean_build != true && inputs.use_rekernel && !(inputs.android_version == 'android17' && inputs.kernel_version == '6.18') }}"
@@ -317,12 +318,17 @@ jobs:
             exit 0
           fi
 
-          if [[ "${{ inputs.android_version }}-${{ inputs.kernel_version }}" == "android17-6.18" ]]; then
+          if [ "${{ inputs.enable_susfs }}" != "true" ]; then
+            echo "SUSFS 已禁用，跳过 SUSFS 仓库克隆。"
+          elif [[ "${{ inputs.android_version }}-${{ inputs.kernel_version }}" == "android17-6.18" ]]; then
             echo "Android 17 / 6.18 暂无 SUSFS 上游分支，跳过克隆。"
           else
-            echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
-            # BakaSU 使用 simonpunk 的原版 SUSFS
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
+            echo "克隆 SukiSU SUSFS 分叉 (分支: $SUSFS_BRANCH)..."
+            if ! git ls-remote --exit-code --heads https://github.com/ShirkNeko/susfs4ksu.git "refs/heads/$SUSFS_BRANCH" >/dev/null; then
+              echo "::error::SukiSU SUSFS 分叉缺少分支 $SUSFS_BRANCH；不会回退到其他 SUSFS 仓库"
+              exit 1
+            fi
+            git clone https://github.com/ShirkNeko/susfs4ksu.git -b "$SUSFS_BRANCH"
 
             # 检查是否启用自定义提交
             CONFIG_FILE="config/config"
@@ -556,48 +562,36 @@ jobs:
           curl -LSs "https://github.com/zzh20188/GKI_KernelSU_SUSFS/raw/refs/heads/dev/hmbird_patch.c" -o hmbird_patch.c
           echo "obj-y += hmbird_patch.o" >> Makefile
 
-      # ==================== 确定 KernelSU 分支 ====================
-      # BakaSU 支持自定义分支或 commit hash
-      - name: 确定 KernelSU 分支
+      # ==================== 确定 SukiSU 分支 ====================
+      - name: 确定 SukiSU 分支
         id: ksu-branch
         if: inputs.clean_build != true
         run: |
-          branch_input="${{ inputs.ksu_branch }}"
-
-          # 如果用户输入了自定义分支名或 commit hash，直接使用
-          if [ -n "$branch_input" ]; then
-            BRANCH="$branch_input"
-            echo "使用自定义分支/提交: $branch_input"
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            BRANCH="builtin"
           else
-            # BakaSU 默认使用 main 分支
             BRANCH="main"
           fi
-
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          echo "KSU 分支: $BRANCH"
+          echo "SukiSU 分支: $BRANCH"
 
-      # ==================== 添加 KernelSU ====================
-      # 添加 BakaSU
-      - name: 添加 KernelSU
+      # ==================== 添加 SukiSU ====================
+      - name: 添加 SukiSU
         if: inputs.clean_build != true
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -euo pipefail
-          echo "添加 BakaSU..."
-          curl -fLSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash -s -- "$BRANCH"
+          echo "添加 SukiSU..."
+          curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$BRANCH"
 
           if [ -d "KernelSU/.git" ]; then
             KSU_ACTUAL_REF=$(git -C KernelSU rev-parse HEAD)
-            if [[ "$BRANCH" =~ ^[a-fA-F0-9]{40}$ ]] && [[ "${KSU_ACTUAL_REF,,}" != "${BRANCH,,}" ]]; then
-              echo "::error::BakaSU 实际提交 $KSU_ACTUAL_REF 与指定提交 $BRANCH 不一致"
-              exit 1
-            fi
             echo "KSU_ACTUAL_REF=$KSU_ACTUAL_REF" >> "$GITHUB_ENV"
             KSU_LATEST_COMMIT_DATE=$(git -C KernelSU log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
             echo "KSU_LATEST_COMMIT_DATE=$KSU_LATEST_COMMIT_DATE" >> "$GITHUB_ENV"
             echo "KSU 仓库最新提交日期: $KSU_LATEST_COMMIT_DATE"
           else
-            echo "::error::BakaSU 安装后缺少 KernelSU 仓库"
+            echo "::error::SukiSU 安装后缺少 KernelSU 仓库"
             exit 1
           fi
 
@@ -626,8 +620,8 @@ jobs:
 
               cd ..
               ;;
-            "Next"|"SukiSU"|"BakaSU")
-              echo "Next/SukiSU/BakaSU 使用内置 SUSFS 支持"
+            "Next"|"SukiSU")
+              echo "SukiSU 使用内置 SUSFS 支持"
               ;;
           esac
 
@@ -782,7 +776,7 @@ jobs:
             fi
           fi
 
-          if [ "${{ inputs.ksu_variant }}" == "Official" ] || [ "${{ inputs.ksu_variant }}" == "Next" ] || [ "${{ inputs.ksu_variant }}" == "SukiSU" ] || [ "${{ inputs.ksu_variant }}" == "BakaSU" ]; then
+          if [ "${{ inputs.ksu_variant }}" == "SukiSU" ]; then
             # Android 12 - 5.10 修复
             if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
                if [[ "$CURRENT_SUB" -le 209 ]]; then
@@ -1314,6 +1308,14 @@ jobs:
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
+
+          if [ "${{ inputs.use_kpm }}" = "true" ]; then
+            if ! grep -RqsE '^[[:space:]]*config[[:space:]]+KPM([[:space:]]|$)' common KernelSU 2>/dev/null; then
+              echo "::error::请求启用 KPM，但当前 SukiSU 源码未声明 CONFIG_KPM"
+              exit 1
+            fi
+            echo "CONFIG_KPM=y" >> "$DEFCONFIG"
+          fi
 
           CURRENT_SUB="${{ inputs.sub_level }}"
           if [[ ! "$CURRENT_SUB" =~ ^[0-9]+$ ]]; then
