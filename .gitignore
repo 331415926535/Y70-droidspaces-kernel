@@ -1,9 +1,12 @@
 # Claude Code
 .claude/
 
+# Gemini
+.gemini/
+
 # Development files
 hympfs-dev.diff
-
+.gitignore
 # IDE & Editors
 .idea/
 .vscode/

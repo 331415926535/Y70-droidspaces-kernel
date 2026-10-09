@@ -1,55 +1,43 @@
-import base64
-import binascii
-import http.client
 import os
 import re
-import subprocess
-import sys
-import tempfile
+import json
+import base64
 import time
-import urllib.error
+import http.client
 import urllib.request
-from datetime import datetime, timezone
+import urllib.error
+from datetime import datetime
 
-GIT_URL = "https://android.googlesource.com/kernel/common"
-MIRROR_URL = "https://raw.githubusercontent.com/aosp-mirror/kernel_common"
+REPO_URL = "https://android.googlesource.com/kernel/common"
+BASE_URL = f"{REPO_URL}/+/refs/heads"
+# gitiles 的 refs 列表接口，一次拿到全部分支名 / tag 名
+REFS_URL = f"{REPO_URL}/+refs"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-_gitiles_unavailable = False
 
 # (android版本, 内核版本): (起始日期, 结束日期, deprecated截止日期)
 # 结束日期为 None 表示活跃版本，运行时自动使用当前月份
 TARGETS = {
-    ("android12", "5.10"): ("2021-08", None,       "2024-08"),
-    ("android13", "5.10"): ("2022-05", None,       "2024-09"),
-    ("android13", "5.15"): ("2022-06", None,       "2024-09"),
-    ("android14", "5.15"): ("2023-06", None,       "2024-09"),
+    ("android12", "5.10"): ("2021-08", "2025-12", "2024-08"),
+    ("android13", "5.15"): ("2022-06", "2025-12", "2024-09"),
     ("android14", "6.1"):  ("2023-06", None,       "2024-09"),
     ("android15", "6.6"):  ("2024-10", None,       ""),
     ("android16", "6.12"): ("2025-06", None,       ""),
-    ("android17", "6.18"): ("2026-04", None,       ""),
 }
 
-TRANSIENT_ERRORS = (
-    urllib.error.URLError,
-    TimeoutError,
-    http.client.RemoteDisconnected,
-    ConnectionResetError,
-    OSError,
-    binascii.Error,
-)
+import binascii
 
-
-class FetchError(RuntimeError):
-    """Raised when an upstream request fails after retries."""
+ERRORS = (urllib.error.HTTPError, urllib.error.URLError,
+          TimeoutError, http.client.RemoteDisconnected,
+          ConnectionResetError, OSError, binascii.Error)
 
 
 def get_end_date(end: str | None) -> str:
     """返回结束日期：如果为 None 则使用当前月份"""
     if end is not None:
         return end
-    return datetime.now(timezone.utc).strftime("%Y-%m")
+    return datetime.now().strftime("%Y-%m")
 
 
 def make_date_range(start: str, end: str) -> list[str]:
@@ -67,185 +55,112 @@ def make_date_range(start: str, end: str) -> list[str]:
     return dates
 
 
-def try_fetch(url: str, attempts: int = 3) -> str | None:
-    """Fetch and decode a googlesource file; return None only for HTTP 404."""
-    request = urllib.request.Request(url, headers={"User-Agent": "GKI-data-updater"})
-    last_error: BaseException | None = None
-
-    for attempt in range(1, attempts + 1):
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                encoded = b"".join(response.read().split())
-                content = base64.b64decode(encoded, validate=True)
-                return content.decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                return None
-            last_error = error
-        except TRANSIENT_ERRORS as error:
-            last_error = error
-
-        if attempt < attempts:
-            time.sleep(attempt)
-
-    raise FetchError(f"failed to fetch {url}: {last_error}")
-
-
-def fetch_git_makefile(ref: str) -> str:
-    """Read one Makefile through Git when Gitiles and the mirror are unavailable."""
-    last_error: BaseException | None = None
-    for attempt in range(1, 4):
-        try:
-            with tempfile.TemporaryDirectory(prefix="gki-makefile-") as directory:
-                subprocess.run(
-                    ["git", "init", "-q", directory],
-                    check=True, capture_output=True, text=True, timeout=30,
-                )
-                subprocess.run(
-                    ["git", "-C", directory, "fetch", "--quiet", "--depth=1",
-                     "--filter=tree:0", "--no-tags", GIT_URL, ref],
-                    check=True, capture_output=True, text=True, timeout=120,
-                )
-                result = subprocess.run(
-                    ["git", "-C", directory, "show", "FETCH_HEAD:Makefile"],
-                    check=True, capture_output=True, text=True, timeout=120,
-                )
-                return result.stdout
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-            last_error = error
-            if attempt < 3:
-                time.sleep(attempt * 2)
-    detail = getattr(last_error, "stderr", None) or str(last_error)
-    raise FetchError(f"failed to read Makefile at {ref} via git: {detail}") from last_error
-
-
-def fetch_ref_makefile(ref: str, sha: str | None = None) -> str | None:
-    """Read an upstream ref, using its exact commit when Gitiles is down."""
-    global _gitiles_unavailable
-    if not _gitiles_unavailable:
-        url = f"{GIT_URL}/+/{ref}/Makefile?format=TEXT"
-        try:
-            return try_fetch(url)
-        except FetchError as error:
-            _gitiles_unavailable = True
-            print(f"Gitiles unavailable ({error}); trying other sources", file=sys.stderr)
-
-    if sha is None:
-        kind = "--tags" if ref.startswith("refs/tags/") else "--heads"
-        refs = list_remote_refs(kind, ref)
-        if not refs:
-            return None
-        sha = refs.splitlines()[0].split("\t", 1)[0]
-
-    mirror_request = urllib.request.Request(
-        f"{MIRROR_URL}/{sha}/Makefile", headers={"User-Agent": "GKI-data-updater"}
-    )
+def try_fetch(url: str) -> str | None:
+    """尝试请求一个 URL，失败返回 None"""
     try:
-        with urllib.request.urlopen(mirror_request, timeout=20) as response:
-            return response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as error:
-        error.close()
-        return fetch_git_makefile(ref)
-    except TRANSIENT_ERRORS:
-        return fetch_git_makefile(ref)
+        with urllib.request.urlopen(url, timeout=20) as resp:
+            return base64.b64decode(resp.read()).decode("utf-8", errors="replace")
+    except ERRORS:
+        return None
+
+
+def fetch_refs() -> tuple[set[str], set[str]] | None:
+    """一次性获取上游全部分支名与 tag 名（不含 refs/heads、refs/tags 前缀），失败返回 None"""
+    result = []
+    for kind in ("heads", "tags"):
+        url = f"{REFS_URL}/{kind}?format=JSON"
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+        except ERRORS:
+            return None
+        # gitiles 的 JSON 响应前面带一行防 XSSI 前缀
+        if raw.startswith(")]}'"):
+            raw = raw.split("\n", 1)[1]
+        try:
+            result.append(set(json.loads(raw).keys()))
+        except ValueError:
+            return None
+    return result[0], result[1]
+
+
+def resolve_ref(branch: str, heads: set[str], tags: set[str]) -> str | None:
+    """按 build.yml 的规则解析月度分支在上游的实际位置：
+    活跃分支 -> refs/heads/<branch>
+    已迁移   -> refs/heads/deprecated/<branch>
+    已删除   -> refs/tags/<branch>_rN（编号最大的发布 tag）
+    都没有   -> None
+    """
+    if branch in heads:
+        return f"refs/heads/{branch}"
+    if f"deprecated/{branch}" in heads:
+        return f"refs/heads/deprecated/{branch}"
+    prefix = f"{branch}_r"
+    best, best_n = None, -1
+    for tag in tags:
+        if tag.startswith(prefix) and tag[len(prefix):].isdigit():
+            n = int(tag[len(prefix):])
+            if n > best_n:
+                best, best_n = tag, n
+    return f"refs/tags/{best}" if best else None
 
 
 def fetch_makefile(android_ver: str, kernel_ver: str, date: str,
-                   dep_cutoff: str) -> str | None:
-    """获取日期分支 Makefile，优先尝试预期路径，失败则回退"""
+                   dep_cutoff: str,
+                   refs: tuple[set[str], set[str]] | None = None) -> str | None:
+    """获取日期分支 Makefile。
+
+    提供 refs 时直接按上游实际位置取（含分支已删除时的发布 tag）；
+    否则退回逐个路径试探：优先预期路径，失败再回退。
+    """
     branch = f"{android_ver}-{kernel_ver}-{date}"
+
+    if refs is not None:
+        ref = resolve_ref(branch, *refs)
+        if ref is None:
+            return None
+        return try_fetch(f"{REPO_URL}/+/{ref}/Makefile?format=TEXT")
+
     if dep_cutoff and date <= dep_cutoff:
         paths = [f"deprecated/{branch}", branch]
     else:
         paths = [branch, f"deprecated/{branch}"]
 
     for p in paths:
-        text = fetch_ref_makefile(f"refs/heads/{p}")
+        url = f"{BASE_URL}/{p}/Makefile?format=TEXT"
+        text = try_fetch(url)
         if text is not None:
             return text
         time.sleep(0.3)
     return None
 
 
+def refresh_refs(entries: list[dict], android_ver: str, kernel_ver: str,
+                 refs: tuple[set[str], set[str]]) -> int:
+    """为每条记录写入 / 更新 ref 字段（上游实际路径），返回变更条数。
+
+    分支会随时间从活跃迁到 deprecated/ 再被删除，因此每次运行都要全量刷新。
+    """
+    heads, tags = refs
+    changed = 0
+    for entry in entries:
+        branch = f"{android_ver}-{kernel_ver}-{entry['date']}"
+        ref = resolve_ref(branch, heads, tags)
+        if entry.get("ref") == ref:
+            continue
+        if ref is None:
+            entry.pop("ref", None)
+        else:
+            entry["ref"] = ref
+        changed += 1
+    return changed
+
+
 def fetch_lts(android_ver: str, kernel_ver: str) -> str | None:
     """获取 LTS 分支 Makefile"""
     lts_branch = f"{android_ver}-{kernel_ver}-lts"
-    return fetch_ref_makefile(f"refs/heads/{lts_branch}")
-
-
-def list_remote_refs(kind: str, *patterns: str) -> str:
-    """List upstream refs with retries for transient network failures."""
-    last_error: BaseException | None = None
-    for attempt in range(1, 4):
-        try:
-            result = subprocess.run(
-                ["git", "ls-remote", kind, GIT_URL, *patterns],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=90,
-            )
-            return result.stdout
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-            last_error = error
-            if attempt < 3:
-                time.sleep(attempt * 2)
-    raise FetchError(f"failed to list upstream refs {patterns}: {last_error}")
-
-
-def fetch_latest_release_tags(android_ver: str, kernel_ver: str) -> dict[str, tuple[str, str]]:
-    """Find the highest released revision for each monthly branch."""
-    prefix = f"{android_ver}-{kernel_ver}-"
-    pattern = re.compile(
-        rf"^refs/tags/{re.escape(prefix)}(\d{{4}}-\d{{2}})_r(\d+)$"
-    )
-    refs = list_remote_refs("--tags", f"refs/tags/{prefix}*_r*")
-    peeled = {}
-    for line in refs.splitlines():
-        sha, _, ref = line.partition("\t")
-        if ref.endswith("^{}"):
-            peeled[ref.removesuffix("^{}")] = sha
-    latest: dict[str, tuple[int, str, str]] = {}
-    for line in refs.splitlines():
-        sha, _, ref = line.partition("\t")
-        match = pattern.fullmatch(ref)
-        if match is None:
-            continue
-        date, revision = match.group(1), int(match.group(2))
-        tag = ref.removeprefix("refs/tags/")
-        if date not in latest or revision > latest[date][0]:
-            latest[date] = (revision, tag, peeled.get(ref, sha))
-    if not latest:
-        raise FetchError(f"no monthly release tags found for {prefix}")
-    return {date: (tag, sha) for date, (_, tag, sha) in latest.items()}
-
-
-def fetch_monthly_branches(android_ver: str, kernel_ver: str) -> set[str]:
-    """Find monthly branches, including ones moved under deprecated/."""
-    prefix = f"{android_ver}-{kernel_ver}-"
-    pattern = re.compile(
-        rf"^refs/heads/(?:deprecated/)?{re.escape(prefix)}(\d{{4}}-\d{{2}})$"
-    )
-    refs = list_remote_refs(
-        "--heads",
-        f"refs/heads/{prefix}20*",
-        f"refs/heads/deprecated/{prefix}20*",
-    )
-    branches = set()
-    for line in refs.splitlines():
-        _, _, ref = line.partition("\t")
-        match = pattern.fullmatch(ref)
-        if match is not None:
-            branches.add(match.group(1))
-    return branches
-
-
-def fetch_tag_makefile(tag: str, sha: str) -> str:
-    """Read the Makefile from the exact release tag used for its revision."""
-    text = fetch_ref_makefile(f"refs/tags/{tag}", sha)
-    if text is None:
-        raise FetchError(f"release tag has no Makefile: {tag}")
-    return text
+    url = f"{BASE_URL}/{lts_branch}/Makefile?format=TEXT"
+    return try_fetch(url)
 
 
 def parse_version(makefile_text: str) -> tuple[str, str, str] | None:
